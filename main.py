@@ -205,42 +205,20 @@ def calc_metrics(
     alpha_daily    = avg_basket_ret - (rf_daily + beta * (avg_bm_ret - rf_daily))
     alpha_annual   = alpha_daily * TRADING_DAYS_PER_YEAR
 
-    # ── Rolling 1-Year Sharpe ─────────────────────────────────────────────────
-    # Excess return for the window  = raw 1-yr return of basket - annual RF rate
-    # Volatility for the window     = annualised std of daily returns in window
-    # Sharpe = excess_return_1yr / vol_1yr
-    if len(b_ret) >= window:
-        rolling_raw_ret  = b_ret.rolling(window).apply(
-            lambda x: (1 + x).prod() - 1, raw=True          # compound 1-yr return
-        )
-        rolling_vol      = b_ret.rolling(window).std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-        rolling_excess   = rolling_raw_ret - risk_free_rate_annual
-        rolling_sharpe   = rolling_excess / rolling_vol
-        sharpe = rolling_sharpe.iloc[-1]
-    else:
-        # Fallback: use all available data
-        raw_ret_all  = (1 + b_ret).prod() - 1
-        vol_all      = b_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-        sharpe       = (raw_ret_all - risk_free_rate_annual) / vol_all if vol_all != 0 else np.nan
+    # ── Sharpe Ratio (Since Inception) ────────────────────────────────────────
+    raw_ret_all  = (1 + b_ret).prod() - 1
+    vol_all      = b_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+    sharpe       = (raw_ret_all - risk_free_rate_annual) / vol_all if vol_all != 0 else np.nan
 
-    # ── Rolling 1-Year Sortino ────────────────────────────────────────────────
-    # Excess return (numerator)  = raw 1-yr return - annual RF rate
-    # Downside deviation (denom) = annualised std of negative daily excess returns
-    def _sortino_window(daily_rets: np.ndarray) -> float:
-        """Compute Sortino for a single rolling window of daily returns."""
-        raw_ret      = float((1 + daily_rets).prod() - 1)
-        excess_ann   = raw_ret - risk_free_rate_annual
-        neg_excess   = daily_rets[daily_rets < rf_daily] - rf_daily
-        if len(neg_excess) == 0:
-            return np.nan
+    # ── Sortino Ratio (Since Inception) ───────────────────────────────────────
+    raw_ret_all    = float((1 + b_ret).prod() - 1)
+    excess_ann     = raw_ret_all - risk_free_rate_annual
+    neg_excess     = b_ret.values[b_ret.values < rf_daily] - rf_daily
+    if len(neg_excess) == 0:
+        sortino = np.nan
+    else:
         down_dev = np.sqrt(np.mean(neg_excess ** 2)) * np.sqrt(TRADING_DAYS_PER_YEAR)
-        return excess_ann / down_dev if down_dev != 0 else np.nan
-
-    if len(b_ret) >= window:
-        rolling_sortino = b_ret.rolling(window).apply(_sortino_window, raw=True)
-        sortino = rolling_sortino.iloc[-1]
-    else:
-        sortino = _sortino_window(b_ret.values)
+        sortino = excess_ann / down_dev if down_dev != 0 else np.nan
 
     # ── Max Drawdown (full history) ───────────────────────────────────────────
     cumulative   = (1 + b_ret).cumprod()
@@ -248,17 +226,9 @@ def calc_metrics(
     drawdown     = (cumulative - rolling_max) / rolling_max
     max_drawdown = drawdown.min()
 
-    # ── Rolling 1-Year Information Ratio ─────────────────────────────────────
-    # IR = annualised mean(active daily return) / annualised std(active daily return)
-    # computed over the last 252 trading days
+    # ── Information Ratio (Since Inception) ──────────────────────────────────
     active_ret = b_ret - bm_ret
-    if len(active_ret) >= window:
-        rolling_ir_mean = active_ret.rolling(window).mean()
-        rolling_ir_std  = active_ret.rolling(window).std()
-        rolling_ir      = (rolling_ir_mean / rolling_ir_std) * np.sqrt(TRADING_DAYS_PER_YEAR)
-        ir = rolling_ir.iloc[-1]
-    else:
-        ir = (active_ret.mean() / active_ret.std()) * np.sqrt(TRADING_DAYS_PER_YEAR) if active_ret.std() != 0 else np.nan
+    ir = (active_ret.mean() / active_ret.std()) * np.sqrt(TRADING_DAYS_PER_YEAR) if active_ret.std() != 0 else np.nan
 
     return {
         "returns":             returns,
@@ -335,7 +305,7 @@ def print_report(m: dict):
 
     print(f"\n  Risk-Free Rate used : {m['risk_free_rate'] * 100:.2f}% p.a.")
     print(f"  Rolling window      : {m['rolling_window_days']} trading days (1 Year)")
-    print(f"  Sharpe / Sortino / IR are rolling 1-yr values (most recent window)")
+    print(f"  Sharpe / Sortino / IR are since inception values")
     print(f"  Trading days / year : {TRADING_DAYS_PER_YEAR}")
     print(f"{'═' * 60}\n")
 

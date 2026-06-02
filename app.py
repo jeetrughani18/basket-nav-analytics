@@ -249,41 +249,27 @@ def calc_metrics(basket, benchmark, rf_annual):
     # Alpha
     alpha = (b_ret.mean() - (rf_daily + beta * (bm_ret.mean() - rf_daily))) * TRADING_DAYS
 
-    # Rolling Sharpe
-    if len(b_ret) >= window:
-        rr  = b_ret.rolling(window).apply(lambda x: (1 + x).prod() - 1, raw=True)
-        rv  = b_ret.rolling(window).std() * np.sqrt(TRADING_DAYS)
-        sharpe = ((rr - rf_annual) / rv).iloc[-1]
-    else:
-        rr_all = (1 + b_ret).prod() - 1
-        rv_all = b_ret.std() * np.sqrt(TRADING_DAYS)
-        sharpe = (rr_all - rf_annual) / rv_all if rv_all else np.nan
+    # Sharpe (Since Inception)
+    rr_all = (1 + b_ret).prod() - 1
+    rv_all = b_ret.std() * np.sqrt(TRADING_DAYS)
+    sharpe = (rr_all - rf_annual) / rv_all if rv_all else np.nan
 
-    # Rolling Sortino
-    def _sortino(x: np.ndarray) -> float:
-        raw    = float((1 + x).prod() - 1)
-        neg    = x[x < rf_daily] - rf_daily
-        if not len(neg):
-            return np.nan
+    # Sortino (Since Inception)
+    raw    = float((1 + b_ret).prod() - 1)
+    neg    = b_ret[b_ret < rf_daily] - rf_daily
+    if not len(neg):
+        sortino = np.nan
+    else:
         dd = np.sqrt(np.mean(neg ** 2)) * np.sqrt(TRADING_DAYS)
-        return (raw - rf_annual) / dd if dd else np.nan
-
-    if len(b_ret) >= window:
-        sortino = b_ret.rolling(window).apply(_sortino, raw=True).iloc[-1]
-    else:
-        sortino = _sortino(b_ret.values)
+        sortino = (raw - rf_annual) / dd if dd else np.nan
 
     # Max Drawdown
     cum = (1 + b_ret).cumprod()
     mdd = ((cum - cum.cummax()) / cum.cummax()).min()
 
-    # Rolling IR
+    # Information Ratio (Since Inception)
     act = b_ret - bm_ret
-    if len(act) >= window:
-        ir = ((act.rolling(window).mean() / act.rolling(window).std()) *
-              np.sqrt(TRADING_DAYS)).iloc[-1]
-    else:
-        ir = (act.mean() / act.std()) * np.sqrt(TRADING_DAYS) if act.std() else np.nan
+    ir = (act.mean() / act.std()) * np.sqrt(TRADING_DAYS) if act.std() else np.nan
 
     return {
         "returns": returns, "vol": vol, "bm_vol": bm_vol,
@@ -691,10 +677,10 @@ risk_rows = [
     ["Volatility (Ann.)",      pct_cell(m["vol"]),     pct_cell(m["bm_vol"])],
     ["Rolling 1-Yr Beta",      fmt_cell(m["beta"]),    "1.0000"],
     ["Alpha (Ann.)",           pct_cell(m["alpha"]),   "—"],
-    ["Sharpe Ratio (1-Yr)",    fmt_cell(m["sharpe"]),  "—"],
-    ["Sortino Ratio (1-Yr)",   fmt_cell(m["sortino"]), "—"],
+    ["Sharpe Ratio",           fmt_cell(m["sharpe"]),  "—"],
+    ["Sortino Ratio",          fmt_cell(m["sortino"]), "—"],
     ["Max Drawdown",           pct_cell(m["mdd"]),     "—"],
-    ["Information Ratio (1-Yr)", fmt_cell(m["ir"]),    "—"],
+    ["Information Ratio",      fmt_cell(m["ir"]),    "—"],
 ]
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(render_html_table(risk_rows, ["Metric", basket_name, bm_name]),
@@ -703,7 +689,7 @@ st.markdown(render_html_table(risk_rows, ["Metric", basket_name, bm_name]),
 st.caption(
     f"🔹 Risk-Free Rate: {rf_rate*100:.2f}% p.a.   "
     f"🔹 Rolling window: {TRADING_DAYS} trading days   "
-    f"🔹 Sharpe / Sortino / IR: rolling 1-yr (most recent window)"
+    f"🔹 Sharpe / Sortino / IR: since inception"
 )
 
 st.markdown("---")
