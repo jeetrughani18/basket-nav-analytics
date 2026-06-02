@@ -428,13 +428,13 @@ def make_rebalance_chart(records, basket_name, bm_name):
             text=f"<b>{basket_name} : Excess Returns vs. {bm_name} After Each Rebalancing</b>",
             font=dict(size=15, color="#E2E8F0"),
         ),
-        paper_bgcolor="#0F1117", plot_bgcolor="white",
+        paper_bgcolor="#0F1117", plot_bgcolor="#0F1117",
         font=dict(family="Inter", color="#94A3B8"),
-        xaxis=dict(tickfont=dict(color="#333", size=12), showgrid=False),
+        xaxis=dict(tickfont=dict(color="#E2E8F0", size=12), showgrid=False),
         yaxis=dict(
-            gridcolor="#DDDDDD", showgrid=True, zeroline=True,
-            zerolinecolor="#999", tickformat=".2%",
-            tickfont=dict(color="#333"),
+            gridcolor="#334155", showgrid=True, zeroline=True,
+            zerolinecolor="#94A3B8", tickformat=".2%",
+            tickfont=dict(color="#E2E8F0"),
         ),
         showlegend=False,
         bargap=0.4,
@@ -448,7 +448,7 @@ def make_rebalance_chart(records, basket_name, bm_name):
                     for i, r in enumerate(records)
                 ),
                 showarrow=False,
-                font=dict(size=11, color="#555"),
+                font=dict(size=11, color="#E2E8F0"),
                 align="center",
             )
         ],
