@@ -405,25 +405,26 @@ def make_nav_chart(basket, benchmark, basket_name, bm_name):
 
 
 def make_rebalance_chart(records, basket_name, bm_name):
-    labels = [r["Cycle"] for r in records]
-    values = [r["_exc"]  for r in records]
-    colors = [CYCLE_COLORS[i % len(CYCLE_COLORS)] for i in range(len(records))]
-    text   = [f"{v * 100:.2f}%" if not np.isnan(v) else "N/A" for v in values]
-
-    fig = go.Figure(go.Bar(
-        x=["Excess Return"] * len(records),
-        y=values,
-        marker_color=colors,
-        text=text,
-        textposition="outside",
-        textfont=dict(size=13, color="#E2E8F0", family="Inter"),
-        name="Excess Return",
-        hovertemplate="<b>%{customdata}</b><br>Excess Return: %{text}<extra></extra>",
-        customdata=labels,
-        width=0.5,
-    ))
+    fig = go.Figure()
+    
+    for i, r in enumerate(records):
+        val = r["_exc"]
+        text = f"{val * 100:.2f}%" if not np.isnan(val) else "N/A"
+        
+        fig.add_trace(go.Bar(
+            x=["Excess Return"],
+            y=[val],
+            name=r["Cycle"],
+            marker_color=CYCLE_COLORS[i % len(CYCLE_COLORS)],
+            text=[text],
+            textposition="outside",
+            textfont=dict(size=13, color="#E2E8F0", family="Inter"),
+            hovertemplate="<b>%{data.name}</b><br>Excess Return: %{text}<extra></extra>",
+            width=0.15,
+        ))
 
     fig.update_layout(
+        barmode="group",
         title=dict(
             text=f"<b>{basket_name} : Excess Returns vs. {bm_name} After Each Rebalancing</b>",
             font=dict(size=15, color="#E2E8F0"),
@@ -436,22 +437,19 @@ def make_rebalance_chart(records, basket_name, bm_name):
             zerolinecolor="#94A3B8", tickformat=".2%",
             tickfont=dict(color="#E2E8F0"),
         ),
-        showlegend=False,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.1,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#E2E8F0")
+        ),
         bargap=0.4,
         margin=dict(l=60, r=40, t=70, b=60),
         height=440,
-        annotations=[
-            dict(
-                x=0.5, y=-0.16, xref="paper", yref="paper",
-                text=" · ".join(
-                    f'<span style="color:{CYCLE_COLORS[i % len(CYCLE_COLORS)]}">■</span> {r["Cycle"]}'
-                    for i, r in enumerate(records)
-                ),
-                showarrow=False,
-                font=dict(size=11, color="#E2E8F0"),
-                align="center",
-            )
-        ],
     )
     return fig
 
