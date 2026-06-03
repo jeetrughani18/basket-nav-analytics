@@ -249,12 +249,17 @@ def calc_metrics(basket, benchmark, rf_annual):
     # Alpha
     alpha = (b_ret.mean() - (rf_daily + beta * (bm_ret.mean() - rf_daily))) * TRADING_DAYS
 
-    # Sharpe (Since Inception)
+    # Sharpe (Since Inception) — Basket
     rr_all = (1 + b_ret).prod() - 1
     rv_all = b_ret.std() * np.sqrt(TRADING_DAYS)
     sharpe = (rr_all - rf_annual) / rv_all if rv_all else np.nan
 
-    # Sortino (Since Inception)
+    # Sharpe (Since Inception) — Benchmark
+    bm_rr_all = (1 + bm_ret).prod() - 1
+    bm_rv_all = bm_ret.std() * np.sqrt(TRADING_DAYS)
+    bm_sharpe = (bm_rr_all - rf_annual) / bm_rv_all if bm_rv_all else np.nan
+
+    # Sortino (Since Inception) — Basket
     raw    = float((1 + b_ret).prod() - 1)
     neg    = b_ret[b_ret < rf_daily] - rf_daily
     if not len(neg):
@@ -263,9 +268,22 @@ def calc_metrics(basket, benchmark, rf_annual):
         dd = np.sqrt(np.mean(neg ** 2)) * np.sqrt(TRADING_DAYS)
         sortino = (raw - rf_annual) / dd if dd else np.nan
 
-    # Max Drawdown
+    # Sortino (Since Inception) — Benchmark
+    bm_raw    = float((1 + bm_ret).prod() - 1)
+    bm_neg    = bm_ret[bm_ret < rf_daily] - rf_daily
+    if not len(bm_neg):
+        bm_sortino = np.nan
+    else:
+        bm_dd = np.sqrt(np.mean(bm_neg ** 2)) * np.sqrt(TRADING_DAYS)
+        bm_sortino = (bm_raw - rf_annual) / bm_dd if bm_dd else np.nan
+
+    # Max Drawdown — Basket
     cum = (1 + b_ret).cumprod()
     mdd = ((cum - cum.cummax()) / cum.cummax()).min()
+
+    # Max Drawdown — Benchmark
+    bm_cum = (1 + bm_ret).cumprod()
+    bm_mdd = ((bm_cum - bm_cum.cummax()) / bm_cum.cummax()).min()
 
     # Information Ratio (Since Inception)
     act = b_ret - bm_ret
@@ -273,8 +291,11 @@ def calc_metrics(basket, benchmark, rf_annual):
 
     return {
         "returns": returns, "vol": vol, "bm_vol": bm_vol,
-        "beta": beta, "alpha": alpha, "sharpe": sharpe,
-        "sortino": sortino, "mdd": mdd, "ir": ir,
+        "beta": beta, "alpha": alpha,
+        "sharpe": sharpe, "bm_sharpe": bm_sharpe,
+        "sortino": sortino, "bm_sortino": bm_sortino,
+        "mdd": mdd, "bm_mdd": bm_mdd,
+        "ir": ir,
     }
 
 
@@ -674,20 +695,22 @@ c2.metric("Rolling 1-Yr Beta",    f"{m['beta']:.4f}")
 c3.metric("Alpha (Ann.)",         f"{m['alpha']*100:.2f}%",
           delta_color="normal")
 c4.metric("Max Drawdown",         f"{m['mdd']*100:.2f}%",
-          delta_color="inverse")
+          delta=f"BM: {m['bm_mdd']*100:.2f}%", delta_color="off")
 
 c5, c6, c7, _ = st.columns(4)
-c5.metric("Sharpe Ratio",         f"{m['sharpe']:.4f}")
-c6.metric("Sortino Ratio",        f"{m['sortino']:.4f}")
+c5.metric("Sharpe Ratio",         f"{m['sharpe']:.4f}",
+          delta=f"BM: {m['bm_sharpe']:.4f}", delta_color="off")
+c6.metric("Sortino Ratio",        f"{m['sortino']:.4f}",
+          delta=f"BM: {m['bm_sortino']:.4f}", delta_color="off")
 c7.metric("Information Ratio",    f"{m['ir']:.4f}")
 
 risk_rows = [
     ["Volatility (Ann.)",      pct_cell(m["vol"]),     pct_cell(m["bm_vol"])],
     ["Rolling 1-Yr Beta",      fmt_cell(m["beta"]),    "1.0000"],
     ["Alpha (Ann.)",           pct_cell(m["alpha"]),   "—"],
-    ["Sharpe Ratio",           fmt_cell(m["sharpe"]),  "—"],
-    ["Sortino Ratio",          fmt_cell(m["sortino"]), "—"],
-    ["Max Drawdown",           pct_cell(m["mdd"]),     "—"],
+    ["Sharpe Ratio",           fmt_cell(m["sharpe"]),  fmt_cell(m["bm_sharpe"])],
+    ["Sortino Ratio",          fmt_cell(m["sortino"]), fmt_cell(m["bm_sortino"])],
+    ["Max Drawdown",           pct_cell(m["mdd"]),     pct_cell(m["bm_mdd"])],
     ["Information Ratio",      fmt_cell(m["ir"]),    "—"],
 ]
 st.markdown("<br>", unsafe_allow_html=True)

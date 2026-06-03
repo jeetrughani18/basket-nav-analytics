@@ -210,6 +210,11 @@ def calc_metrics(
     vol_all      = b_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
     sharpe       = (raw_ret_all - risk_free_rate_annual) / vol_all if vol_all != 0 else np.nan
 
+    # ── Sharpe Ratio (Since Inception) — Benchmark ───────────────────────────
+    bm_raw_ret   = (1 + bm_ret).prod() - 1
+    bm_vol_all   = bm_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+    bm_sharpe    = (bm_raw_ret - risk_free_rate_annual) / bm_vol_all if bm_vol_all != 0 else np.nan
+
     # ── Sortino Ratio (Since Inception) ───────────────────────────────────────
     raw_ret_all    = float((1 + b_ret).prod() - 1)
     excess_ann     = raw_ret_all - risk_free_rate_annual
@@ -220,11 +225,27 @@ def calc_metrics(
         down_dev = np.sqrt(np.mean(neg_excess ** 2)) * np.sqrt(TRADING_DAYS_PER_YEAR)
         sortino = excess_ann / down_dev if down_dev != 0 else np.nan
 
+    # ── Sortino Ratio (Since Inception) — Benchmark ──────────────────────────
+    bm_raw_ret_all = float((1 + bm_ret).prod() - 1)
+    bm_excess_ann  = bm_raw_ret_all - risk_free_rate_annual
+    bm_neg_excess  = bm_ret.values[bm_ret.values < rf_daily] - rf_daily
+    if len(bm_neg_excess) == 0:
+        bm_sortino = np.nan
+    else:
+        bm_down_dev = np.sqrt(np.mean(bm_neg_excess ** 2)) * np.sqrt(TRADING_DAYS_PER_YEAR)
+        bm_sortino = bm_excess_ann / bm_down_dev if bm_down_dev != 0 else np.nan
+
     # ── Max Drawdown (full history) ───────────────────────────────────────────
     cumulative   = (1 + b_ret).cumprod()
     rolling_max  = cumulative.cummax()
     drawdown     = (cumulative - rolling_max) / rolling_max
     max_drawdown = drawdown.min()
+
+    # ── Max Drawdown — Benchmark ─────────────────────────────────────────────
+    bm_cumulative   = (1 + bm_ret).cumprod()
+    bm_rolling_max  = bm_cumulative.cummax()
+    bm_drawdown     = (bm_cumulative - bm_rolling_max) / bm_rolling_max
+    bm_max_drawdown = bm_drawdown.min()
 
     # ── Information Ratio (Since Inception) ──────────────────────────────────
     active_ret = b_ret - bm_ret
@@ -237,8 +258,11 @@ def calc_metrics(
         "beta":                beta,
         "alpha":               alpha_annual,
         "sharpe":              sharpe,
+        "bm_sharpe":           bm_sharpe,
         "sortino":             sortino,
+        "bm_sortino":          bm_sortino,
         "max_drawdown":        max_drawdown,
+        "bm_max_drawdown":     bm_max_drawdown,
         "ir":                  ir,
         "basket_name":         basket_name,
         "benchmark_name":      benchmark_name,
@@ -293,9 +317,9 @@ def print_report(m: dict):
         ["Volatility (Ann.)",       pct(m["volatility"]),    pct(m["bm_volatility"])],
         ["Rolling 1Yr Beta",        fmt(m["beta"], 4),        "1.0000"],
         ["Alpha (Ann.)",            pct(m["alpha"]),          "—"],
-        ["Sharpe Ratio",            fmt(m["sharpe"], 4),      "—"],
-        ["Sortino Ratio",           fmt(m["sortino"], 4),     "—"],
-        ["Max Drawdown",            pct(m["max_drawdown"]),   "—"],
+        ["Sharpe Ratio",            fmt(m["sharpe"], 4),      fmt(m["bm_sharpe"], 4)],
+        ["Sortino Ratio",           fmt(m["sortino"], 4),     fmt(m["bm_sortino"], 4)],
+        ["Max Drawdown",            pct(m["max_drawdown"]),   pct(m["bm_max_drawdown"])],
         ["Information Ratio (IR)",  fmt(m["ir"], 4),          "—"],
     ]
     print(tabulate(risk_rows,
