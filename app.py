@@ -586,7 +586,12 @@ st.markdown("""
              margin: 0;">
     📊 Basket NAV Analytics
   </h1>
-  <p style="color:#64748B; font-size:0.95rem; margin-top:6px;">
+  <p style="font-size:1.1rem; margin-top:10px; font-weight:600;
+            color:#F0B90B; letter-spacing:0.08em;
+            text-shadow: 0 0 12px rgba(240,185,11,0.35);">
+    by Jeet Rughani
+  </p>
+  <p style="color:#64748B; font-size:0.95rem; margin-top:4px;">
     Upload your NAV CSV · choose a benchmark · get institutional-grade analytics
   </p>
 </div>
