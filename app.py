@@ -279,14 +279,22 @@ def calc_metrics(basket, benchmark, rf_annual):
 
 
 def calc_rebalance(basket, benchmark, dates):
-    b0  = nav_on_or_before(basket,    basket.index[0])
-    bm0 = nav_on_or_before(benchmark, benchmark.index[0])
+    sorted_dates = sorted(dates)
     rows = []
-    for i, rd in enumerate(sorted(dates), 1):
-        be  = nav_on_or_before(basket,    rd)
-        bme = nav_on_or_before(benchmark, rd)
-        br  = (be  / b0  - 1) if be  and b0  else np.nan
-        bmr = (bme / bm0 - 1) if bme and bm0 else np.nan
+    for i, rd in enumerate(sorted_dates, 1):
+        # Cycle 1: start from inception; Cycle N: start from previous rebalance date
+        if i == 1:
+            start_dt = basket.index[0]
+        else:
+            start_dt = sorted_dates[i - 2]  # previous rebalance date
+
+        b_start = nav_on_or_before(basket,    start_dt)
+        bm_start = nav_on_or_before(benchmark, start_dt)
+        b_end   = nav_on_or_before(basket,    rd)
+        bm_end  = nav_on_or_before(benchmark, rd)
+
+        br  = (b_end  / b_start  - 1) if b_end  and b_start  else np.nan
+        bmr = (bm_end / bm_start - 1) if bm_end and bm_start else np.nan
         rows.append({
             "Cycle":          f"Rebalance Cycle {i}",
             "Rebalance Date": rd.strftime("%d-%b-%Y"),
@@ -715,7 +723,7 @@ else:
         records = calc_rebalance(basket, benchmark, valid_dates)
 
         # ── Table ───────────────────────────────────────────────────────────
-        st.markdown("**Inception → Each Rebalance Date**")
+        st.markdown("**Period-to-Period Rebalance Returns**")
         rb_rows = [
             [r["Cycle"], r["Rebalance Date"],
              pct_cell(r["_br"]), pct_cell(r["_bmr"]), pct_cell(r["_exc"])]

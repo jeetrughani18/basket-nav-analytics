@@ -326,19 +326,25 @@ def calc_rebalance_analysis(
     rebalance_dates: list[pd.Timestamp],
 ) -> list[dict]:
     """
-    For each rebalance date compute:
-      basket return     = inception NAV → NAV on rebalance date
-      benchmark return  = inception price → price on rebalance date
-      excess return     = basket return − benchmark return
+    For each rebalance cycle compute:
+      Cycle 1: inception → rebalance date 1
+      Cycle N: rebalance date (N-1) → rebalance date N
+      excess return = basket return − benchmark return
     """
-    inception = basket.index[0]
-    b_start   = _nav_at(basket, inception)
-    bm_start  = _nav_at(benchmark, inception)
+    sorted_dates = sorted(rebalance_dates)
 
     records = []
-    for i, rd in enumerate(rebalance_dates, start=1):
-        b_end  = _nav_at(basket,    rd)
-        bm_end = _nav_at(benchmark, rd)
+    for i, rd in enumerate(sorted_dates, start=1):
+        # Cycle 1: start from inception; Cycle N: start from previous rebalance date
+        if i == 1:
+            start_dt = basket.index[0]
+        else:
+            start_dt = sorted_dates[i - 2]  # previous rebalance date
+
+        b_start = _nav_at(basket,    start_dt)
+        bm_start = _nav_at(benchmark, start_dt)
+        b_end   = _nav_at(basket,    rd)
+        bm_end  = _nav_at(benchmark, rd)
 
         b_ret  = (b_end  / b_start  - 1) if (b_end  is not None and b_start)  else float("nan")
         bm_ret = (bm_end / bm_start - 1) if (bm_end is not None and bm_start) else float("nan")
@@ -368,7 +374,7 @@ def print_rebalance_table(records: list[dict], basket_name: str, benchmark_name:
         for r in records
     ]
     print(f"\n{'═' * 72}")
-    print(f"  REBALANCE CYCLE RETURNS  (Inception → Rebalance Date)")
+    print(f"  REBALANCE CYCLE RETURNS  (Period-to-Period)")
     print(f"{'═' * 72}")
     print(tabulate(
         rows,
