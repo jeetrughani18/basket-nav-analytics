@@ -5,6 +5,7 @@ Run with:   streamlit run app.py
 """
 
 import warnings
+import io
 from datetime import timedelta
 
 import numpy as np
@@ -554,22 +555,26 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 📅 Rebalance Dates (optional)")
-    n_rebal = st.number_input(
-        "Number of rebalance dates", min_value=0, max_value=20, value=0, step=1
+    rebal_uploaded = st.file_uploader(
+        "📁 Upload Rebalance CSV (Date column)",
+        type=["csv"],
+        help="CSV must have a 'Date' column in DD-MM-YYYY format",
     )
 
     rebalance_dates = []
-    if n_rebal > 0:
-        st.caption("Enter each date (DD-MM-YYYY):")
-        for i in range(int(n_rebal)):
-            raw = st.text_input(f"Rebalance Date {i+1}", key=f"rd_{i}",
-                                placeholder="e.g. 31-03-2024")
-            if raw:
-                try:
-                    rd = pd.to_datetime(raw, dayfirst=True, format="%d-%m-%Y")
-                    rebalance_dates.append(rd)
-                except ValueError:
-                    st.warning(f"⚠️ Date {i+1}: use DD-MM-YYYY format")
+    if rebal_uploaded is not None:
+        try:
+            rebal_df_in = pd.read_csv(rebal_uploaded)
+            if "Date" in rebal_df_in.columns:
+                parsed_dates = pd.to_datetime(rebal_df_in["Date"], format="%d-%m-%Y", errors="coerce")
+                valid_parsed = parsed_dates.dropna()
+                if len(valid_parsed) < len(rebal_df_in):
+                    st.warning("⚠️ Some dates could not be parsed and were skipped.")
+                rebalance_dates = valid_parsed.tolist()
+            else:
+                st.warning("⚠️ Rebalance CSV must contain a 'Date' column")
+        except Exception as e:
+            st.error(f"Error parsing rebalance file: {e}")
 
     st.markdown("---")
     run_btn = st.button("🚀 Run Analysis", use_container_width=True)
@@ -616,6 +621,8 @@ if not run_btn or uploaded is None:
         </div>
         """, unsafe_allow_html=True)
     st.stop()
+
+rb_df = None
 
 # ── Load basket ───────────────────────────────────────────────────────────────
 try:
@@ -699,19 +706,12 @@ ret_rows = [
 st.markdown(render_html_table(ret_rows, ["Period", basket_name, bm_name]),
             unsafe_allow_html=True)
 
-# ── Download Returns CSV ──────────────────────────────────────────────────
+# ── Prepare Returns DataFrame ─────────────────────────────────────────────
 returns_csv_rows = [
     [period, pct_plain(r[key][0]), pct_plain(r[key][1])]
     for period, key in period_map
 ]
 returns_df = pd.DataFrame(returns_csv_rows, columns=["Period", basket_name, bm_name])
-st.download_button(
-    label="⬇️ Download Returns CSV",
-    data=returns_df.to_csv(index=False),
-    file_name="returns.csv",
-    mime="text/csv",
-    key="dl_returns",
-)
 
 st.markdown("---")
 
@@ -756,7 +756,7 @@ st.caption(
     f"🔹 Sharpe / Sortino / IR: since inception"
 )
 
-# ── Download Risk Metrics CSV ─────────────────────────────────────────────
+# ── Prepare Risk Metrics DataFrame ────────────────────────────────────────
 risk_csv_rows = [
     ["Volatility (Ann.)",  pct_plain(m["vol"]),     pct_plain(m["bm_vol"])],
     ["Rolling 1-Yr Beta",  fmt_plain(m["beta"]),    "1.0000"],
@@ -767,13 +767,6 @@ risk_csv_rows = [
     ["Information Ratio",  fmt_plain(m["ir"]),       "—"],
 ]
 risk_df = pd.DataFrame(risk_csv_rows, columns=["Metric", basket_name, bm_name])
-st.download_button(
-    label="⬇️ Download Risk Metrics CSV",
-    data=risk_df.to_csv(index=False),
-    file_name="risk_quality_metrics.csv",
-    mime="text/csv",
-    key="dl_risk",
-)
 
 st.markdown("---")
 
@@ -809,20 +802,13 @@ else:
             unsafe_allow_html=True,
         )
 
-        # ── Download Rebalance CSV ────────────────────────────────────────
+        # ── Prepare Rebalance DataFrame ───────────────────────────────────
         rb_csv_rows = [
             [r["Cycle"], r["Rebalance Date"],
              pct_plain(r["_br"]), pct_plain(r["_bmr"]), pct_plain(r["_exc"])]
             for r in records
         ]
         rb_df = pd.DataFrame(rb_csv_rows, columns=["Cycle", "Rebalance Date", basket_name, bm_name, "Excess Return"])
-        st.download_button(
-            label="⬇️ Download Rebalance Cycle CSV",
-            data=rb_df.to_csv(index=False),
-            file_name="rebalance_cycles.csv",
-            mime="text/csv",
-            key="dl_rebalance",
-        )
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -831,6 +817,28 @@ else:
             make_rebalance_chart(records, basket_name, bm_name),
             use_container_width=True,
         )
+
+st.markdown("---")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DOWNLOAD EXCEL REPORT
+# ──────────────────────────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">📥 Download Consolidated Report</div>', unsafe_allow_html=True)
+
+output = io.BytesIO()
+with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    returns_df.to_excel(writer, sheet_name='Returns', index=False)
+    risk_df.to_excel(writer, sheet_name='Risk Metrics', index=False)
+    if rb_df is not None:
+        rb_df.to_excel(writer, sheet_name='Rebalance Cycles', index=False)
+
+excel_data = output.getvalue()
+st.download_button(
+    label="⬇️ Download Full Excel Report",
+    data=excel_data,
+    file_name="basket_nav_analytics.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
 st.markdown("---")
 st.markdown(
