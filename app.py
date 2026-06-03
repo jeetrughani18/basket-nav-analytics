@@ -486,6 +486,20 @@ def fmt_cell(v, decimals=4):
     return f"{v:.{decimals}f}"
 
 
+def pct_plain(v):
+    """Plain text percentage for CSV export (no HTML)."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return "—"
+    return f"{v * 100:.2f}%"
+
+
+def fmt_plain(v, decimals=4):
+    """Plain text number for CSV export (no HTML)."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return "—"
+    return f"{v:.{decimals}f}"
+
+
 def render_html_table(rows, headers):
     th = "".join(f"<th>{h}</th>" for h in headers)
     body = ""
@@ -680,6 +694,20 @@ ret_rows = [
 st.markdown(render_html_table(ret_rows, ["Period", basket_name, bm_name]),
             unsafe_allow_html=True)
 
+# ── Download Returns CSV ──────────────────────────────────────────────────
+returns_csv_rows = [
+    [period, pct_plain(r[key][0]), pct_plain(r[key][1])]
+    for period, key in period_map
+]
+returns_df = pd.DataFrame(returns_csv_rows, columns=["Period", basket_name, bm_name])
+st.download_button(
+    label="⬇️ Download Returns CSV",
+    data=returns_df.to_csv(index=False),
+    file_name="returns.csv",
+    mime="text/csv",
+    key="dl_returns",
+)
+
 st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -721,6 +749,25 @@ st.caption(
     f"🔹 Risk-Free Rate: {rf_rate*100:.2f}% p.a.   "
     f"🔹 Rolling window: {TRADING_DAYS} trading days   "
     f"🔹 Sharpe / Sortino / IR: since inception"
+)
+
+# ── Download Risk Metrics CSV ─────────────────────────────────────────────
+risk_csv_rows = [
+    ["Volatility (Ann.)",  pct_plain(m["vol"]),     pct_plain(m["bm_vol"])],
+    ["Rolling 1-Yr Beta",  fmt_plain(m["beta"]),    "1.0000"],
+    ["Alpha (Ann.)",       pct_plain(m["alpha"]),   "—"],
+    ["Sharpe Ratio",       fmt_plain(m["sharpe"]),  fmt_plain(m["bm_sharpe"])],
+    ["Sortino Ratio",      fmt_plain(m["sortino"]), fmt_plain(m["bm_sortino"])],
+    ["Max Drawdown",       pct_plain(m["mdd"]),     pct_plain(m["bm_mdd"])],
+    ["Information Ratio",  fmt_plain(m["ir"]),       "—"],
+]
+risk_df = pd.DataFrame(risk_csv_rows, columns=["Metric", basket_name, bm_name])
+st.download_button(
+    label="⬇️ Download Risk Metrics CSV",
+    data=risk_df.to_csv(index=False),
+    file_name="risk_quality_metrics.csv",
+    mime="text/csv",
+    key="dl_risk",
 )
 
 st.markdown("---")
