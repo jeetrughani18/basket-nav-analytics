@@ -804,6 +804,21 @@ else:
             unsafe_allow_html=True,
         )
 
+        # ── Download Rebalance CSV ────────────────────────────────────────
+        rb_csv_rows = [
+            [r["Cycle"], r["Rebalance Date"],
+             pct_plain(r["_br"]), pct_plain(r["_bmr"]), pct_plain(r["_exc"])]
+            for r in records
+        ]
+        rb_df = pd.DataFrame(rb_csv_rows, columns=["Cycle", "Rebalance Date", basket_name, bm_name, "Excess Return"])
+        st.download_button(
+            label="⬇️ Download Rebalance Cycle CSV",
+            data=rb_df.to_csv(index=False),
+            file_name="rebalance_cycles.csv",
+            mime="text/csv",
+            key="dl_rebalance",
+        )
+
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Bar chart ───────────────────────────────────────────────────────
