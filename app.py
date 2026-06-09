@@ -676,10 +676,8 @@ st.markdown("---")
 # ──────────────────────────────────────────────────────────────────────────────
 
 st.markdown('<div class="section-header">📈 NAV Growth Since Inception</div>', unsafe_allow_html=True)
-st.plotly_chart(
-    make_nav_chart(basket, benchmark, basket_name, bm_name),
-    use_container_width=True,
-)
+nav_fig = make_nav_chart(basket, benchmark, basket_name, bm_name)
+st.plotly_chart(nav_fig, use_container_width=True)
 
 st.markdown("---")
 
@@ -776,6 +774,8 @@ st.markdown("---")
 
 st.markdown('<div class="section-header">🔁 Rebalance Cycle Analysis</div>', unsafe_allow_html=True)
 
+rebal_fig = None  # will be set if rebalance dates are provided
+
 if not rebalance_dates:
     st.info("ℹ️ Enter rebalance dates in the sidebar to enable this section.")
 else:
@@ -813,10 +813,8 @@ else:
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Bar chart ───────────────────────────────────────────────────────
-        st.plotly_chart(
-            make_rebalance_chart(records, basket_name, bm_name),
-            use_container_width=True,
-        )
+        rebal_fig = make_rebalance_chart(records, basket_name, bm_name)
+        st.plotly_chart(rebal_fig, use_container_width=True)
 
 st.markdown("---")
 
@@ -827,10 +825,34 @@ st.markdown('<div class="section-header">📥 Download Consolidated Report</div>
 
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    workbook = writer.book
+
+    # ── Data sheets ──────────────────────────────────────────────────────────
     returns_df.to_excel(writer, sheet_name='Returns', index=False)
     risk_df.to_excel(writer, sheet_name='Risk Metrics', index=False)
     if rb_df is not None:
         rb_df.to_excel(writer, sheet_name='Rebalance Cycles', index=False)
+
+    # ── Chart sheets ─────────────────────────────────────────────────────────
+    # Convert Plotly figures to PNG and embed as images
+    try:
+        import plotly.io as pio
+
+        # NAV Growth chart
+        nav_png = pio.to_image(nav_fig, format="png", width=1400, height=600, scale=2)
+        nav_sheet = workbook.add_worksheet('NAV Growth Chart')
+        writer.sheets['NAV Growth Chart'] = nav_sheet
+        nav_sheet.insert_image('A1', 'nav_chart.png', {'image_data': io.BytesIO(nav_png)})
+
+        # Rebalance chart (only if it exists)
+        if rebal_fig is not None:
+            rb_png = pio.to_image(rebal_fig, format="png", width=1400, height=600, scale=2)
+            rb_sheet = workbook.add_worksheet('Rebalance Chart')
+            writer.sheets['Rebalance Chart'] = rb_sheet
+            rb_sheet.insert_image('A1', 'rebalance_chart.png', {'image_data': io.BytesIO(rb_png)})
+    except Exception as chart_err:
+        # If kaleido is unavailable in cloud env, silently skip charts
+        st.caption(f"ℹ️ Charts could not be embedded: {chart_err}")
 
 excel_data = output.getvalue()
 st.download_button(
