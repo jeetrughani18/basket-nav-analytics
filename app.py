@@ -578,6 +578,14 @@ with st.sidebar:
 
     st.markdown("---")
     run_btn = st.button("🚀 Run Analysis", use_container_width=True)
+    if run_btn and uploaded is not None:
+        st.session_state["analysis_done"] = True
+    elif run_btn and uploaded is None:
+        st.session_state["analysis_done"] = False
+
+    # Reset if file is removed
+    if uploaded is None:
+        st.session_state["analysis_done"] = False
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN AREA HEADER
@@ -608,7 +616,7 @@ st.markdown("---")
 # RUN ANALYSIS
 # ──────────────────────────────────────────────────────────────────────────────
 
-if not run_btn or uploaded is None:
+if not st.session_state.get("analysis_done") or uploaded is None:
     if uploaded is None and run_btn:
         st.warning("⚠️ Please upload a CSV file first.")
     else:
@@ -837,16 +845,31 @@ with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
     # Convert Plotly figures to PNG and embed as images
     try:
         import plotly.io as pio
+        import copy
+
+        def _white_fig(fig):
+            """Return a copy of a Plotly figure with a white background for Excel export."""
+            f = copy.deepcopy(fig)
+            f.update_layout(
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                font=dict(color="#111827"),
+                title=dict(font=dict(color="#111827")),
+                xaxis=dict(tickfont=dict(color="#111827"), gridcolor="#E5E7EB"),
+                yaxis=dict(tickfont=dict(color="#111827"), gridcolor="#E5E7EB"),
+                legend=dict(bgcolor="white", font=dict(color="#111827")),
+            )
+            return f
 
         # NAV Growth chart
-        nav_png = pio.to_image(nav_fig, format="png", width=1400, height=600, scale=2)
+        nav_png = pio.to_image(_white_fig(nav_fig), format="png", width=1400, height=600, scale=2)
         nav_sheet = workbook.add_worksheet('NAV Growth Chart')
         writer.sheets['NAV Growth Chart'] = nav_sheet
         nav_sheet.insert_image('A1', 'nav_chart.png', {'image_data': io.BytesIO(nav_png)})
 
         # Rebalance chart (only if it exists)
         if rebal_fig is not None:
-            rb_png = pio.to_image(rebal_fig, format="png", width=1400, height=600, scale=2)
+            rb_png = pio.to_image(_white_fig(rebal_fig), format="png", width=1400, height=600, scale=2)
             rb_sheet = workbook.add_worksheet('Rebalance Chart')
             writer.sheets['Rebalance Chart'] = rb_sheet
             rb_sheet.insert_image('A1', 'rebalance_chart.png', {'image_data': io.BytesIO(rb_png)})
