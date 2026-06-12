@@ -558,18 +558,71 @@ with st.sidebar:
     rebal_uploaded = st.file_uploader(
         "📁 Upload Rebalance CSV (Date column)",
         type=["csv"],
-        help="CSV must have a 'Date' column in DD-MM-YYYY format",
+        help=(
+            "CSV must have a 'Date' column. "
+            "Accepted formats: YYYY-MM-DD, DD/MM/YY, YY/MM/DD, "
+            "DD/Month/YY (e.g. 01/Jan/25), DD-MM-YYYY, DD-Mon-YYYY, and more."
+        ),
     )
+
+    # ── Supported date formats for rebalance CSV ──────────────────────────────
+    _REBAL_DATE_FORMATS = [
+        "%Y-%m-%d",    # 2024-03-15  (ISO 8601)
+        "%d/%m/%Y",    # 15/03/2024
+        "%d/%m/%y",    # 15/03/24
+        "%y/%m/%d",    # 24/03/15
+        "%d/%b/%y",    # 15/Mar/24  (dd/Month/yy)
+        "%d/%b/%Y",    # 15/Mar/2024
+        "%d-%m-%Y",    # 15-03-2024
+        "%d-%m-%y",    # 15-03-24
+        "%d-%b-%Y",    # 15-Mar-2024
+        "%d-%b-%y",    # 15-Mar-24
+
+        "%d.%m.%Y",    # 15.03.2024
+        "%d.%m.%y",    # 15.03.24
+        "%Y%m%d",      # 20240315    (compact ISO)
+    ]
+
+    def _parse_rebal_dates(series: pd.Series) -> pd.Series:
+        """Try each supported format; return a Series of Timestamps (NaT for failures)."""
+        result = pd.Series([pd.NaT] * len(series), dtype="datetime64[ns]")
+        remaining_mask = pd.Series([True] * len(series))
+        for fmt in _REBAL_DATE_FORMATS:
+            if not remaining_mask.any():
+                break
+            parsed = pd.to_datetime(
+                series.where(remaining_mask), format=fmt, errors="coerce"
+            )
+            filled = parsed.notna()
+            result = result.where(~filled, parsed)
+            remaining_mask = remaining_mask & ~filled
+        # Last resort: pandas mixed/inferred parser for anything still unparsed
+        if remaining_mask.any():
+            fallback = pd.to_datetime(
+                series.where(remaining_mask), infer_datetime_format=True,
+                dayfirst=True, errors="coerce"
+            )
+            filled = fallback.notna()
+            result = result.where(~filled, fallback)
+        return result
 
     rebalance_dates = []
     if rebal_uploaded is not None:
         try:
             rebal_df_in = pd.read_csv(rebal_uploaded)
-            if "Date" in rebal_df_in.columns:
-                parsed_dates = pd.to_datetime(rebal_df_in["Date"], format="%d-%m-%Y", errors="coerce")
+            # Accept column named 'Date', 'date', 'DATE', etc.
+            date_col_rb = next(
+                (c for c in rebal_df_in.columns if c.strip().lower() == "date"), None
+            )
+            if date_col_rb is not None:
+                parsed_dates = _parse_rebal_dates(rebal_df_in[date_col_rb].astype(str).str.strip())
                 valid_parsed = parsed_dates.dropna()
-                if len(valid_parsed) < len(rebal_df_in):
-                    st.warning("⚠️ Some dates could not be parsed and were skipped.")
+                skipped = len(rebal_df_in) - len(valid_parsed)
+                if skipped > 0:
+                    st.warning(
+                        f"⚠️ {skipped} date(s) could not be parsed and were skipped. "
+                        "Check that your dates match a supported format."
+                    )
                 rebalance_dates = valid_parsed.tolist()
             else:
                 st.warning("⚠️ Rebalance CSV must contain a 'Date' column")
