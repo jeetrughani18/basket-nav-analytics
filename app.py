@@ -251,32 +251,33 @@ def calc_metrics(basket, benchmark, rf_annual):
     alpha = (b_ret.mean() - (rf_daily + beta * (bm_ret.mean() - rf_daily))) * TRADING_DAYS
 
     # Sharpe (Since Inception) — Basket
+    n_days = len(b_ret)
     rr_all = (1 + b_ret).prod() - 1
+    cagr_b = (1 + rr_all) ** (TRADING_DAYS / n_days) - 1 if n_days > 0 else np.nan
     rv_all = b_ret.std() * np.sqrt(TRADING_DAYS)
-    sharpe = (rr_all - rf_annual) / rv_all if rv_all else np.nan
+    sharpe = (cagr_b - rf_annual) / rv_all if rv_all else np.nan
 
     # Sharpe (Since Inception) — Benchmark
     bm_rr_all = (1 + bm_ret).prod() - 1
+    cagr_bm   = (1 + bm_rr_all) ** (TRADING_DAYS / n_days) - 1 if n_days > 0 else np.nan
     bm_rv_all = bm_ret.std() * np.sqrt(TRADING_DAYS)
-    bm_sharpe = (bm_rr_all - rf_annual) / bm_rv_all if bm_rv_all else np.nan
+    bm_sharpe = (cagr_bm - rf_annual) / bm_rv_all if bm_rv_all else np.nan
 
     # Sortino (Since Inception) — Basket
-    raw    = float((1 + b_ret).prod() - 1)
     neg    = b_ret[b_ret < rf_daily] - rf_daily
     if not len(neg):
         sortino = np.nan
     else:
         dd = np.sqrt(np.mean(neg ** 2)) * np.sqrt(TRADING_DAYS)
-        sortino = (raw - rf_annual) / dd if dd else np.nan
+        sortino = (cagr_b - rf_annual) / dd if dd else np.nan
 
     # Sortino (Since Inception) — Benchmark
-    bm_raw    = float((1 + bm_ret).prod() - 1)
     bm_neg    = bm_ret[bm_ret < rf_daily] - rf_daily
     if not len(bm_neg):
         bm_sortino = np.nan
     else:
         bm_dd = np.sqrt(np.mean(bm_neg ** 2)) * np.sqrt(TRADING_DAYS)
-        bm_sortino = (bm_raw - rf_annual) / bm_dd if bm_dd else np.nan
+        bm_sortino = (cagr_bm - rf_annual) / bm_dd if bm_dd else np.nan
 
     # Max Drawdown — Basket
     cum = (1 + b_ret).cumprod()

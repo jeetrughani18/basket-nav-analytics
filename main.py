@@ -206,18 +206,20 @@ def calc_metrics(
     alpha_annual   = alpha_daily * TRADING_DAYS_PER_YEAR
 
     # ── Sharpe Ratio (Since Inception) ────────────────────────────────────────
+    n_days       = len(b_ret)
     raw_ret_all  = (1 + b_ret).prod() - 1
+    cagr_basket  = (1 + raw_ret_all) ** (TRADING_DAYS_PER_YEAR / n_days) - 1 if n_days > 0 else np.nan
     vol_all      = b_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-    sharpe       = (raw_ret_all - risk_free_rate_annual) / vol_all if vol_all != 0 else np.nan
+    sharpe       = (cagr_basket - risk_free_rate_annual) / vol_all if vol_all != 0 else np.nan
 
     # ── Sharpe Ratio (Since Inception) — Benchmark ───────────────────────────
     bm_raw_ret   = (1 + bm_ret).prod() - 1
+    cagr_bm      = (1 + bm_raw_ret) ** (TRADING_DAYS_PER_YEAR / n_days) - 1 if n_days > 0 else np.nan
     bm_vol_all   = bm_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-    bm_sharpe    = (bm_raw_ret - risk_free_rate_annual) / bm_vol_all if bm_vol_all != 0 else np.nan
+    bm_sharpe    = (cagr_bm - risk_free_rate_annual) / bm_vol_all if bm_vol_all != 0 else np.nan
 
     # ── Sortino Ratio (Since Inception) ───────────────────────────────────────
-    raw_ret_all    = float((1 + b_ret).prod() - 1)
-    excess_ann     = raw_ret_all - risk_free_rate_annual
+    excess_ann     = cagr_basket - risk_free_rate_annual
     neg_excess     = b_ret.values[b_ret.values < rf_daily] - rf_daily
     if len(neg_excess) == 0:
         sortino = np.nan
@@ -226,8 +228,7 @@ def calc_metrics(
         sortino = excess_ann / down_dev if down_dev != 0 else np.nan
 
     # ── Sortino Ratio (Since Inception) — Benchmark ──────────────────────────
-    bm_raw_ret_all = float((1 + bm_ret).prod() - 1)
-    bm_excess_ann  = bm_raw_ret_all - risk_free_rate_annual
+    bm_excess_ann  = cagr_bm - risk_free_rate_annual
     bm_neg_excess  = bm_ret.values[bm_ret.values < rf_daily] - rf_daily
     if len(bm_neg_excess) == 0:
         bm_sortino = np.nan
