@@ -1,8 +1,15 @@
-streamlit>=1.35.0
-pandas>=2.0.0
-numpy>=1.26.0
-yfinance>=0.2.40
-plotly>=5.22.0
-tabulate>=0.9.0
-xlsxwriter>=3.2.0
+# Pinned deliberately. These are the exact versions the app is verified against.
+# Previously every line was ">=", so each Streamlit Cloud redeploy resolved to
+# whatever was newest that day. On 2026-08-05 that pulled streamlit 1.61.0 with
+# starlette 1.4.0, whose GZipResponder.__init__ gained a required
+# thread_minimum_size argument that streamlit 1.61.0 does not pass -- the server
+# returned 500 to every health check and the app never started.
+# Bump these one at a time, and re-test, rather than loosening back to ">=".
+streamlit==1.55.0
+pandas==2.3.2
+numpy==1.26.4
+yfinance==0.2.65
+plotly==6.0.1
+tabulate==0.9.0
+xlsxwriter==3.2.5
 kaleido==0.2.1
