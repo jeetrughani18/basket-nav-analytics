@@ -166,6 +166,15 @@ def load_basket_nav(file) -> pd.Series:
     date_col = next((c for c in df.columns if "date" in c.lower()), None)
     nav_col  = next((c for c in df.columns if "nav"  in c.lower()), None)
     if not date_col or not nav_col:
+        lower = [c.lower() for c in df.columns]
+        # A trade book in the NAV slot is the easy mistake to make -- both are CSVs
+        # with a date column, so say which uploader it belongs in.
+        if any("weight" in c for c in lower) and any("holding" in c for c in lower):
+            raise ValueError(
+                "This looks like a rebalance trade book, not a NAV series. "
+                "Upload it under 'Rebalance Dates' lower down the sidebar. "
+                "This slot needs your basket's daily NAV (a Date column and a NAV column)."
+            )
         raise ValueError(f"CSV must have a Date column and a NAV column. Found: {list(df.columns)}")
     df["_date"] = pd.to_datetime(df[date_col], dayfirst=True, errors="coerce")
     df = df.dropna(subset=["_date"]).sort_values("_date").set_index("_date")
@@ -735,11 +744,14 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📅 Rebalance Dates (optional)")
     rebal_uploaded = st.file_uploader(
-        "📁 Upload Rebalance CSV (Date column)",
+        "📁 Upload Rebalance CSV (dates, or a full trade book)",
         type=["csv"],
         help=(
-            "CSV must have a 'Date' column. "
-            "Accepted formats: YYYY-MM-DD, DD/MM/YY, YY/MM/DD, "
+            "Two formats are accepted.\n\n"
+            "• A trade book with 'Exit Date', 'Weight' and 'Holding Days' columns — "
+            "this also prices transaction costs and unlocks the net-of-cost returns.\n\n"
+            "• A plain 'Date' column of rebalance dates — cycle analysis only.\n\n"
+            "Accepted date formats: YYYY-MM-DD, DD/MM/YY, YY/MM/DD, "
             "DD/Month/YY (e.g. 01/Jan/25), DD-MM-YYYY, DD-Mon-YYYY, and more."
         ),
     )
