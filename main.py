@@ -132,16 +132,19 @@ def download_benchmark(ticker: str, start: str, end: str) -> pd.Series:
 def align_series(basket: pd.Series, benchmark: pd.Series) -> tuple[pd.Series, pd.Series]:
     """
     Reindex benchmark to basket dates using forward-fill, then drop NaN rows.
-    We only keep the intersection period.
+
+    The basket NAV drives the calendar. We only clip the *start* (nothing to
+    forward-fill from before the benchmark's first bar); the end is left alone so
+    that a session missing from the benchmark — an index holiday or a Yahoo data
+    gap — does not silently drop the newest NAV points.
     """
     common_start = max(basket.index[0], benchmark.index[0])
-    common_end   = min(basket.index[-1], benchmark.index[-1])
 
-    basket    = basket[common_start : common_end]
-    benchmark = benchmark.reindex(basket.index, method="ffill").dropna()
-    basket    = basket.reindex(benchmark.index)
+    basket    = basket[basket.index >= common_start]
+    benchmark = benchmark.reindex(basket.index, method="ffill")
+    keep      = benchmark.notna()
 
-    return basket, benchmark
+    return basket[keep], benchmark[keep]
 
 
 # ─────────────────────────────────────────────

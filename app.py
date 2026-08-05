@@ -190,12 +190,14 @@ def fetch_benchmark(ticker: str, start: str, end: str) -> pd.Series:
 
 
 def align_series(basket: pd.Series, benchmark: pd.Series):
+    # The basket NAV drives the calendar; the benchmark is forward-filled onto it.
+    # Truncating to the benchmark's last date would silently drop the newest NAV
+    # points whenever Yahoo is missing a session (index holiday or data gap).
     cs = max(basket.index[0], benchmark.index[0])
-    ce = min(basket.index[-1], benchmark.index[-1])
-    basket    = basket[cs:ce]
-    benchmark = benchmark.reindex(basket.index, method="ffill").dropna()
-    basket    = basket.reindex(benchmark.index)
-    return basket, benchmark
+    basket    = basket[basket.index >= cs]
+    benchmark = benchmark.reindex(basket.index, method="ffill")
+    keep      = benchmark.notna()
+    return basket[keep], benchmark[keep]
 
 
 def nav_on_or_before(series: pd.Series, dt: pd.Timestamp):
@@ -325,6 +327,107 @@ def calc_rebalance(basket, benchmark, dates):
             "_rd": rd,
         })
     return rows
+
+
+# ── Fiscal-year quarters (Indian FY: April → March) ───────────────────────────
+# Q1 Apr-Jun · Q2 Jul-Sep · Q3 Oct-Dec · Q4 Jan-Mar
+FY_QUARTERS = [("Q1", 4, 6), ("Q2", 7, 9), ("Q3", 10, 12), ("Q4", 1, 3)]
+
+
+def fy_quarter_key(ts: pd.Timestamp):
+    """(fy_start_year, quarter_number) for a timestamp. The FY starts 1 April."""
+    if ts.month >= 4:
+        return ts.year, (ts.month - 4) // 3 + 1      # Apr→Q1, Jul→Q2, Oct→Q3
+    return ts.year - 1, 4                            # Jan-Mar → Q4 of the FY that began last April
+
+
+def quarter_bounds(fy: int, qn: int):
+    """Calendar first/last day of quarter `qn` of the FY beginning April `fy`."""
+    _, sm, em = FY_QUARTERS[qn - 1]
+    yr    = fy if qn <= 3 else fy + 1                # Q4 (Jan-Mar) falls in the next calendar year
+    start = pd.Timestamp(yr, sm, 1)
+    end   = pd.Timestamp(yr, em, 1) + pd.offsets.MonthEnd(0)
+    return start, end
+
+
+def quarter_label(fy: int, qn: int) -> str:
+    return f"{FY_QUARTERS[qn - 1][0]} FY{fy}-{str(fy + 1)[-2:]}"
+
+
+def quarters_between(first: pd.Timestamp, last: pd.Timestamp):
+    """Every FY quarter touched by the data, oldest first."""
+    fy, qn = fy_quarter_key(first)
+    out    = []
+    while quarter_bounds(fy, qn)[0] <= last:
+        out.append((fy, qn))
+        qn += 1
+        if qn > 4:
+            qn, fy = 1, fy + 1
+    return out
+
+
+def calc_quarterly(basket: pd.Series, benchmark: pd.Series):
+    """
+    Per-quarter basket / benchmark return and alpha (basket − benchmark).
+
+    A quarter's return is measured from the last NAV *before* the quarter opened,
+    so no move is lost in the gap between quarters. The very first quarter has no
+    prior NAV, so it is measured from inception and flagged as partial — as is a
+    quarter still in progress.
+    """
+    first, last = basket.index[0], basket.index[-1]
+    rows = []
+    for fy, qn in quarters_between(first, last):
+        qs, qe = quarter_bounds(fy, qn)
+        in_q   = basket.index[(basket.index >= qs) & (basket.index <= qe)]
+        if not len(in_q):
+            continue
+
+        prior   = basket.index[basket.index < qs]
+        base_dt = prior[-1] if len(prior) else in_q[0]
+        end_dt  = in_q[-1]
+
+        b_base,  b_end  = basket.loc[base_dt],    basket.loc[end_dt]
+        bm_base, bm_end = benchmark.loc[base_dt], benchmark.loc[end_dt]
+        br  = b_end  / b_base  - 1 if b_base  else np.nan
+        bmr = bm_end / bm_base - 1 if bm_base else np.nan
+
+        partial = (not len(prior)) or last < qe
+        rows.append({
+            "Quarter": quarter_label(fy, qn) + (" *" if partial else ""),
+            "Period":  f"{in_q[0].strftime('%d %b %Y')} – {end_dt.strftime('%d %b %Y')}",
+            "_br": br, "_bmr": bmr, "_alpha": br - bmr,
+            "_partial": partial,
+        })
+    return rows
+
+
+# ── Rolling returns ───────────────────────────────────────────────────────────
+ROLLING_WINDOWS = [
+    ("1 Week",   timedelta(days=7)),
+    ("1 Month",  pd.DateOffset(months=1)),
+    ("3 Months", pd.DateOffset(months=3)),
+    ("1 Year",   pd.DateOffset(years=1)),
+]
+
+
+def rolling_return_series(series: pd.Series, offset) -> pd.Series:
+    """Trailing return over `offset` ending on every observation date."""
+    base = pd.Series([series.asof(d - offset) for d in series.index], index=series.index)
+    out  = series / base - 1
+    return out.replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def calc_rolling(basket: pd.Series, benchmark: pd.Series):
+    """{window label: {basket, bm, alpha} rolling-return series} for every window."""
+    out = {}
+    for label, offset in ROLLING_WINDOWS:
+        b  = rolling_return_series(basket, offset)
+        bm = rolling_return_series(benchmark, offset)
+        idx = b.index.intersection(bm.index)
+        b, bm = b.loc[idx], bm.loc[idx]
+        out[label] = {"basket": b, "bm": bm, "alpha": b - bm}
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -776,6 +879,96 @@ returns_df = pd.DataFrame(returns_csv_rows, columns=["Period", basket_name, bm_n
 st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
+# QUARTERLY RETURNS  (Indian FY: Apr → Mar)
+# ──────────────────────────────────────────────────────────────────────────────
+
+st.markdown('<div class="section-header">🗓️ Quarterly Returns &amp; Alpha</div>', unsafe_allow_html=True)
+
+q_records = calc_quarterly(basket, benchmark)
+q_headers = ["Quarter", "Period", basket_name, bm_name, "Alpha"]
+
+if not q_records:
+    st.info("ℹ️ Not enough history to report a quarter.")
+    quarterly_df = pd.DataFrame(columns=q_headers)
+else:
+    q_rows = [
+        [q["Quarter"], q["Period"], pct_cell(q["_br"]), pct_cell(q["_bmr"]), pct_cell(q["_alpha"])]
+        for q in q_records
+    ]
+    st.markdown(render_html_table(q_rows, q_headers), unsafe_allow_html=True)
+
+    st.caption(
+        "🔹 Q1 Apr–Jun · Q2 Jul–Sep · Q3 Oct–Dec · Q4 Jan–Mar (financial year beginning 1 April)   "
+        "🔹 Alpha = Basket − Benchmark   "
+        "🔹 * = partial quarter (inception or still in progress)"
+    )
+
+    quarterly_df = pd.DataFrame(
+        [[q["Quarter"], q["Period"], pct_plain(q["_br"]), pct_plain(q["_bmr"]), pct_plain(q["_alpha"])]
+         for q in q_records],
+        columns=q_headers,
+    )
+
+st.markdown("---")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ROLLING RETURNS
+# ──────────────────────────────────────────────────────────────────────────────
+
+st.markdown('<div class="section-header">🔄 Rolling Returns &amp; Alpha</div>', unsafe_allow_html=True)
+
+roll         = calc_rolling(basket, benchmark)
+roll_headers = ["Window", "Windows", f"{basket_name} (Avg)", f"{bm_name} (Avg)",
+                "Avg Alpha", "Min Alpha", "Max Alpha", "Latest Alpha", "Outperformance"]
+
+roll_summary = []
+for label, _ in ROLLING_WINDOWS:
+    d, a = roll[label], roll[label]["alpha"]
+    if a.empty:
+        roll_summary.append([label, 0] + [np.nan] * 7)
+        continue
+    roll_summary.append([
+        label, len(a),
+        d["basket"].mean(), d["bm"].mean(),
+        a.mean(), a.min(), a.max(), a.iloc[-1],
+        (a > 0).mean(),
+    ])
+
+st.markdown(
+    render_html_table(
+        [[r[0], f"{r[1]:,}"] + [pct_cell(v) for v in r[2:]] for r in roll_summary],
+        roll_headers,
+    ),
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "🔹 Every observation date's trailing return over the window   "
+    "🔹 Alpha = Basket − Benchmark   "
+    "🔹 Outperformance = share of windows with positive alpha   "
+    "🔹 A window needs full history behind it, so short series report fewer (or zero) windows"
+)
+
+# ── Prepare Rolling DataFrames ────────────────────────────────────────────
+rolling_df = pd.DataFrame(
+    [[r[0], r[1]] + [pct_plain(v) for v in r[2:]] for r in roll_summary],
+    columns=roll_headers,
+)
+
+# Daily rolling series, numeric percentages so the sheet can be charted/filtered
+rolling_daily = pd.DataFrame(index=basket.index)
+for label, _ in ROLLING_WINDOWS:
+    d = roll[label]
+    rolling_daily[f"{label} – Basket (%)"]    = d["basket"] * 100
+    rolling_daily[f"{label} – Benchmark (%)"] = d["bm"]     * 100
+    rolling_daily[f"{label} – Alpha (%)"]     = d["alpha"]  * 100
+rolling_daily = rolling_daily.dropna(how="all").round(4)
+rolling_daily.insert(0, "Date", rolling_daily.index.strftime("%d-%b-%Y"))
+rolling_daily_df = rolling_daily.reset_index(drop=True)
+
+st.markdown("---")
+
+# ──────────────────────────────────────────────────────────────────────────────
 # RISK METRICS
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -891,6 +1084,9 @@ with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
 
     # ── Data sheets ──────────────────────────────────────────────────────────
     returns_df.to_excel(writer, sheet_name='Returns', index=False)
+    quarterly_df.to_excel(writer, sheet_name='Quarterly Returns', index=False)
+    rolling_df.to_excel(writer, sheet_name='Rolling Returns', index=False)
+    rolling_daily_df.to_excel(writer, sheet_name='Rolling Returns Daily', index=False)
     risk_df.to_excel(writer, sheet_name='Risk Metrics', index=False)
     if rb_df is not None:
         rb_df.to_excel(writer, sheet_name='Rebalance Cycles', index=False)
