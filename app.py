@@ -213,8 +213,21 @@ def point_return(series: pd.Series, start: pd.Timestamp) -> float:
     return ev / sv - 1
 
 
+def period_anchors(series: pd.Series) -> dict:
+    """Start date for each reporting period. Single source of truth for the Returns table."""
+    today = series.index[-1]
+    return {
+        "1wk":  today - timedelta(days=7),
+        "1m":   today - pd.DateOffset(months=1),
+        "3m":   today - pd.DateOffset(months=3),
+        "6m":   today - pd.DateOffset(months=6),
+        "1yr":  today - pd.DateOffset(years=1),
+        "ytd":  pd.Timestamp(today.year, 1, 1),
+        "incep": series.index[0],
+    }
+
+
 def calc_metrics(basket, benchmark, rf_annual):
-    today    = basket.index[-1]
     rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS) - 1
     window   = TRADING_DAYS
 
@@ -223,15 +236,7 @@ def calc_metrics(basket, benchmark, rf_annual):
     idx    = b_ret.index.intersection(bm_ret.index)
     b_ret, bm_ret = b_ret.loc[idx], bm_ret.loc[idx]
 
-    dates = {
-        "1wk":  today - timedelta(days=7),
-        "1m":   today - pd.DateOffset(months=1),
-        "3m":   today - pd.DateOffset(months=3),
-        "6m":   today - pd.DateOffset(months=6),
-        "1yr":  today - pd.DateOffset(years=1),
-        "ytd":  pd.Timestamp(today.year, 1, 1),
-        "incep": basket.index[0],
-    }
+    dates = period_anchors(basket)
     returns = {
         k: (point_return(basket, pd.Timestamp(v)),
             point_return(benchmark, pd.Timestamp(v)))
@@ -327,6 +332,65 @@ def calc_rebalance(basket, benchmark, dates):
             "_rd": rd,
         })
     return rows
+
+
+# ── Transaction costs ─────────────────────────────────────────────────────────
+
+def fix_rollover_years(dates: pd.Series) -> pd.Series:
+    """
+    Rebuild the year of a chronologically-ordered date column whose two-digit year
+    does not advance (a common spreadsheet-export artefact: exits running into the
+    next year still carry the old '/26'). Whenever a date steps backwards relative
+    to the row above, every date from there on gains another year.
+    """
+    bump, prev, out = 0, None, []
+    for d in dates:
+        if pd.isna(d):
+            out.append(pd.NaT)
+            continue
+        if prev is not None and d < prev:
+            bump += 1
+        out.append(d + pd.DateOffset(years=bump))
+        prev = d
+    return pd.to_datetime(pd.Series(out, index=dates.index))
+
+
+def build_cost_schedule(trades: pd.DataFrame, bps: float) -> pd.Series:
+    """
+    Fractional NAV drag per date.
+
+    Every position is two transactions — a buy on its entry date and a sell on its
+    exit date — and each leg is charged `bps` on that position's portfolio weight.
+    A 5% position at 25 bps therefore costs 5% x 25bps = 1.25 bps of NAV to open
+    and the same again to close.
+    """
+    if trades is None or trades.empty or not bps:
+        return pd.Series(dtype=float)
+    rate = bps / 10_000.0
+    legs = pd.concat([
+        trades.groupby("entry")["weight"].sum(),
+        trades.groupby("exit")["weight"].sum(),
+    ])
+    return legs.groupby(level=0).sum().sort_index() * rate
+
+
+def apply_transaction_costs(nav: pd.Series, schedule: pd.Series) -> pd.Series:
+    """
+    Gross NAV → NAV net of costs.
+
+    Each cost is charged on the first NAV observation *strictly after* its trade
+    date. Charging it on the trade date itself would make the cost of building the
+    initial portfolio invisible: it would land on the first NAV point, lowering the
+    base that every return is measured from instead of showing up as drag.
+    """
+    if schedule is None or schedule.empty:
+        return nav.copy()
+    factor = pd.Series(1.0, index=nav.index)
+    for dt, cost in schedule.items():
+        pos = nav.index.searchsorted(dt, side="right")
+        if pos < len(nav):
+            factor.iloc[pos] *= (1.0 - cost)
+    return nav * factor.cumprod()
 
 
 # ── Fiscal-year quarters (Indian FY: April → March) ───────────────────────────
@@ -657,6 +721,17 @@ with st.sidebar:
 
     bm_choice = st.selectbox("📈 Benchmark", list(BENCHMARKS.keys()))
 
+    tc_bps = st.number_input(
+        "💸 Transaction Cost (bps per transaction)",
+        min_value=0.0, max_value=200.0,
+        value=25.0, step=1.0, format="%.1f",
+        help=(
+            "Charged on each leg — a buy and a sell are two transactions, so a "
+            "round trip costs twice this. Applied to each position's weight. "
+            "Requires a trade-level rebalance CSV below."
+        ),
+    )
+
     st.markdown("---")
     st.markdown("### 📅 Rebalance Dates (optional)")
     rebal_uploaded = st.file_uploader(
@@ -711,14 +786,53 @@ with st.sidebar:
         return result
 
     rebalance_dates = []
+    trade_book      = None
     if rebal_uploaded is not None:
         try:
-            rebal_df_in = pd.read_csv(rebal_uploaded)
+            rebal_df_in = pd.read_csv(rebal_uploaded, thousands=",")
+            rebal_df_in.columns = [c.strip() for c in rebal_df_in.columns]
+
+            # A trade-level book (Exit Date + Weight + Holding Days) carries enough
+            # information to price transaction costs; a bare Date column does not.
+            exit_col = next((c for c in rebal_df_in.columns
+                             if "exit" in c.lower() and "date" in c.lower()), None)
+            wt_col   = next((c for c in rebal_df_in.columns if "weight"  in c.lower()), None)
+            hold_col = next((c for c in rebal_df_in.columns if "holding" in c.lower()), None)
             # Accept column named 'Date', 'date', 'DATE', etc.
             date_col_rb = next(
                 (c for c in rebal_df_in.columns if c.strip().lower() == "date"), None
             )
-            if date_col_rb is not None:
+
+            if exit_col and wt_col and hold_col:
+                exits  = fix_rollover_years(
+                    _parse_rebal_dates(rebal_df_in[exit_col].astype(str).str.strip())
+                )
+                weight = pd.to_numeric(
+                    rebal_df_in[wt_col].astype(str).str.replace("%", "", regex=False).str.strip(),
+                    errors="coerce",
+                ) / 100.0
+                hold   = pd.to_numeric(rebal_df_in[hold_col], errors="coerce")
+
+                tb = pd.DataFrame({"exit": exits, "weight": weight, "hold": hold})
+                name_col = next((c for c in rebal_df_in.columns
+                                 if c.lower() in ("company", "stock", "symbol", "name")), None)
+                tb["company"] = rebal_df_in[name_col] if name_col else ""
+                tb = tb.dropna(subset=["exit", "weight", "hold"])
+                # Entry dates are derived, not read: the Entry Date column carries no
+                # year, while exit - holding days is unambiguous.
+                tb["entry"] = tb["exit"] - pd.to_timedelta(tb["hold"], unit="D")
+
+                dropped = len(rebal_df_in) - len(tb)
+                if dropped:
+                    st.warning(f"⚠️ {dropped} trade row(s) had unusable date/weight and were skipped.")
+
+                trade_book      = tb
+                rebalance_dates = [pd.Timestamp(d) for d in sorted(tb["exit"].unique())]
+                st.success(
+                    f"✅ {len(tb)} trades · {len(rebalance_dates)} rebalances · "
+                    f"{tb['exit'].min():%b %Y} – {tb['exit'].max():%b %Y}"
+                )
+            elif date_col_rb is not None:
                 parsed_dates = _parse_rebal_dates(rebal_df_in[date_col_rb].astype(str).str.strip())
                 valid_parsed = parsed_dates.dropna()
                 skipped = len(rebal_df_in) - len(valid_parsed)
@@ -823,6 +937,22 @@ with st.spinner("Computing metrics…"):
     m = calc_metrics(basket, benchmark, rf_rate)
     r = m["returns"]
 
+# ── Transaction costs ─────────────────────────────────────────────────────────
+cost_schedule = build_cost_schedule(trade_book, tc_bps)
+# A cost is chargeable only if a NAV observation exists after it to carry the drag.
+# Anything before the NAV starts or on/after it ends is reported, not silently dropped.
+if not cost_schedule.empty:
+    in_window     = cost_schedule[(cost_schedule.index >= basket.index[0]) &
+                                  (cost_schedule.index <  basket.index[-1])]
+    costs_outside = len(cost_schedule) - len(in_window)
+else:
+    in_window, costs_outside = cost_schedule, 0
+
+basket_net  = apply_transaction_costs(basket, in_window)
+has_costs   = not in_window.empty
+anchors     = period_anchors(basket)
+r_net       = {k: point_return(basket_net, pd.Timestamp(v)) for k, v in anchors.items()}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # HEADER STRIP
 # ──────────────────────────────────────────────────────────────────────────────
@@ -862,19 +992,36 @@ period_map = [
     ("Since Inception", "incep"),
 ]
 
-ret_rows = [
-    [period, pct_cell(r[key][0]), pct_cell(r[key][1])]
-    for period, key in period_map
-]
-st.markdown(render_html_table(ret_rows, ["Period", basket_name, bm_name]),
-            unsafe_allow_html=True)
+if has_costs:
+    ret_headers = ["Period", f"{basket_name} (Gross)", f"{basket_name} (Net of Cost)",
+                   "Cost Drag", bm_name]
+    ret_cells   = lambda key, fmt: [fmt(r[key][0]), fmt(r_net[key]),
+                                    fmt(r_net[key] - r[key][0]), fmt(r[key][1])]
+else:
+    ret_headers = ["Period", basket_name, bm_name]
+    ret_cells   = lambda key, fmt: [fmt(r[key][0]), fmt(r[key][1])]
+
+ret_rows = [[period] + ret_cells(key, pct_cell) for period, key in period_map]
+st.markdown(render_html_table(ret_rows, ret_headers), unsafe_allow_html=True)
+
+if has_costs:
+    total_drag = r_net["incep"] - r["incep"][0]
+    st.caption(
+        f"🔹 Transaction cost: {tc_bps:.1f} bps per transaction, charged on both the buy "
+        f"and the sell leg of every position, on that position's weight   "
+        f"🔹 {len(in_window)} costed rebalance date(s) inside the NAV window"
+        + (f", {costs_outside} outside it (ignored)" if costs_outside else "")
+        + f"   🔹 Total drag since inception: {total_drag*100:.2f}%"
+    )
+else:
+    st.caption(
+        "🔹 Upload a trade-level rebalance CSV (Exit Date · Weight · Holding Days) "
+        "in the sidebar to see returns net of transaction costs"
+    )
 
 # ── Prepare Returns DataFrame ─────────────────────────────────────────────
-returns_csv_rows = [
-    [period, pct_plain(r[key][0]), pct_plain(r[key][1])]
-    for period, key in period_map
-]
-returns_df = pd.DataFrame(returns_csv_rows, columns=["Period", basket_name, bm_name])
+returns_csv_rows = [[period] + ret_cells(key, pct_plain) for period, key in period_map]
+returns_df = pd.DataFrame(returns_csv_rows, columns=ret_headers)
 
 st.markdown("---")
 
@@ -1084,6 +1231,21 @@ with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
 
     # ── Data sheets ──────────────────────────────────────────────────────────
     returns_df.to_excel(writer, sheet_name='Returns', index=False)
+    if has_costs:
+        pd.DataFrame({
+            "Date":            [d.strftime("%d-%b-%Y") for d in cost_schedule.index],
+            "Weight Traded":   [pct_plain(c / (tc_bps / 10_000.0)) for c in cost_schedule.values],
+            "Cost (bps of NAV)": [round(c * 10_000, 4) for c in cost_schedule.values],
+            "Charged": ["Yes" if basket.index[0] <= d < basket.index[-1] else "No"
+                        for d in cost_schedule.index],
+        }).to_excel(writer, sheet_name='Transaction Costs', index=False)
+        trade_book.assign(
+            entry=trade_book["entry"].dt.strftime("%d-%b-%Y"),
+            exit=trade_book["exit"].dt.strftime("%d-%b-%Y"),
+        )[["company", "entry", "exit", "hold", "weight"]].rename(columns={
+            "company": "Company", "entry": "Entry Date", "exit": "Exit Date",
+            "hold": "Holding Days", "weight": "Weight",
+        }).to_excel(writer, sheet_name='Trade Book', index=False)
     quarterly_df.to_excel(writer, sheet_name='Quarterly Returns', index=False)
     rolling_df.to_excel(writer, sheet_name='Rolling Returns', index=False)
     rolling_daily_df.to_excel(writer, sheet_name='Rolling Returns Daily', index=False)
