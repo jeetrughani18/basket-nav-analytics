@@ -756,9 +756,11 @@ with st.sidebar:
         ),
     )
 
-    # ── Sample CSV download ───────────────────────────────────────────────────
-    # A ready-to-edit template so users keep the exact column layout the parser
-    # expects: swap in your own rows, keep the header, re-upload above.
+    # ── Sample CSV downloads ──────────────────────────────────────────────────
+    # Ready-to-edit templates so users keep the exact column layout each parser
+    # path expects: swap in your own rows, keep the header, re-upload above.
+
+    # Format 1 — full trade book (prices transaction costs + net-of-cost returns).
     _SAMPLE_REBALANCE_CSV = (
         "Exit Date,Company,Entry,Exit,G/L,Weight,Return %,Holding Days,Entry Date\n"
         "08/04/25,INDIGO,\"4,183\",\"5,166\",23%,5%,1.20%,50,17-Feb\n"
@@ -767,12 +769,27 @@ with st.sidebar:
         "20/05/25,CAMS,\"3,356\",\"3,930\",17%,5%,0.90%,92,17-Feb\n"
         "20/05/25,CHOLAFIN,\"1,352\",\"1,612\",19%,6%,1.20%,92,17-Feb\n"
     )
+    # Format 2 — plain list of rebalance dates (cycle analysis only).
+    _SAMPLE_REBAL_DATES_CSV = (
+        "Date\n"
+        "17-Feb-2025\n"
+        "08-Apr-2025\n"
+        "20-May-2025\n"
+        "15-Jul-2025\n"
+    )
     st.download_button(
-        "⬇️ Download sample rebalance CSV",
+        "⬇️ Sample trade-book CSV",
         data=_SAMPLE_REBALANCE_CSV,
-        file_name="sample_rebalance.csv",
+        file_name="sample_rebalance_trade_book.csv",
         mime="text/csv",
-        help="Keep the header row and column order; replace the values with your own trades.",
+        help="Full trade book — keep the header row and column order; replace the values with your own trades.",
+    )
+    st.download_button(
+        "⬇️ Sample dates-only CSV",
+        data=_SAMPLE_REBAL_DATES_CSV,
+        file_name="sample_rebalance_dates.csv",
+        mime="text/csv",
+        help="Plain rebalance dates — keep the 'Date' header; one date per row.",
     )
 
     # ── Supported date formats for rebalance CSV ──────────────────────────────
