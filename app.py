@@ -756,6 +756,25 @@ with st.sidebar:
         ),
     )
 
+    # ── Sample CSV download ───────────────────────────────────────────────────
+    # A ready-to-edit template so users keep the exact column layout the parser
+    # expects: swap in your own rows, keep the header, re-upload above.
+    _SAMPLE_REBALANCE_CSV = (
+        "Exit Date,Company,Entry,Exit,G/L,Weight,Return %,Holding Days,Entry Date\n"
+        "08/04/25,INDIGO,\"4,183\",\"5,166\",23%,5%,1.20%,50,17-Feb\n"
+        "08/04/25,AVALON,622,763,23%,3%,0.70%,50,17-Feb\n"
+        "08/04/25,KPRMILL,839,937,12%,3%,0.40%,50,17-Feb\n"
+        "20/05/25,CAMS,\"3,356\",\"3,930\",17%,5%,0.90%,92,17-Feb\n"
+        "20/05/25,CHOLAFIN,\"1,352\",\"1,612\",19%,6%,1.20%,92,17-Feb\n"
+    )
+    st.download_button(
+        "⬇️ Download sample rebalance CSV",
+        data=_SAMPLE_REBALANCE_CSV,
+        file_name="sample_rebalance.csv",
+        mime="text/csv",
+        help="Keep the header row and column order; replace the values with your own trades.",
+    )
+
     # ── Supported date formats for rebalance CSV ──────────────────────────────
     _REBAL_DATE_FORMATS = [
         "%Y-%m-%d",    # 2024-03-15  (ISO 8601)
